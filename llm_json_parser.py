@@ -269,9 +269,15 @@ class LLMJsonParser(object):
         if result is not self._SENTINEL:
             return result
 
-        # Step 5：不完整 JSON 修复（最后手段）
-        s5 = self._fix_incomplete_json(s4)
+        # Step 5：修复值字符串中未转义的引号
+        s5 = self._fix_unescaped_quotes_in_values(s4)
         result = self._try_loads(s5)
+        if result is not self._SENTINEL:
+            return result
+
+        # Step 6：不完整 JSON 修复（最后手段）
+        s6 = self._fix_incomplete_json(s5)
+        result = self._try_loads(s6)
         if result is not self._SENTINEL:
             return result
 
@@ -599,7 +605,124 @@ class LLMJsonParser(object):
 
         return ''.join(result)
 
-    # ── 清洗步骤 5：不完整 JSON 修复 ────────────────────────────────────────
+    # ── 清洗步骤 5：修复值字符串中未转义的引号 ──────────────────────────────
+
+    def _fix_unescaped_quotes_in_values(self, text):
+        """
+        修复 JSON 值字符串中未转义的双引号。
+
+        核心启发式：在合法 JSON 中，值字符串的关闭引号后面（忽略空白）
+        必须是 , } ] 或输入结束。如果一个引号后面跟的是其他字符，
+        说明它是嵌入引号，应转义为 \\"。
+
+        此启发式不适用于键字符串，因为 "key": 是正常语法。
+        """
+        n = len(text)
+        if n == 0:
+            return text
+
+        result = []
+        i = 0
+        # State tracking
+        stack = []          # 'object' or 'array'
+        expect_value = False
+        in_string = False
+        is_value_string = False
+
+        while i < n:
+            ch = text[i]
+
+            if in_string:
+                # Handle escape sequences
+                if ch == '\\' and i + 1 < n:
+                    result.append(ch)
+                    result.append(text[i + 1])
+                    i += 2
+                    continue
+
+                if ch == '"':
+                    if not is_value_string:
+                        # Key string — closing quote is always real
+                        result.append(ch)
+                        in_string = False
+                        i += 1
+                        continue
+
+                    # Value string — look ahead to decide if this is the real close
+                    j = i + 1
+                    while j < n and text[j] in ' \t\n\r':
+                        j += 1
+
+                    if j >= n or text[j] in (',', '}', ']'):
+                        # Real closing quote
+                        result.append(ch)
+                        in_string = False
+                        i += 1
+                        continue
+                    else:
+                        # Embedded quote — escape it
+                        result.append('\\')
+                        result.append('"')
+                        i += 1
+                        continue
+
+                # Normal character inside string
+                result.append(ch)
+                i += 1
+                continue
+
+            # Outside any string
+            if ch == '"':
+                in_string = True
+                is_value_string = expect_value
+                result.append(ch)
+                i += 1
+                continue
+
+            if ch == '{':
+                stack.append('object')
+                expect_value = False  # next token should be key (or })
+                result.append(ch)
+                i += 1
+                continue
+
+            if ch == '[':
+                stack.append('array')
+                expect_value = True  # array elements are values
+                result.append(ch)
+                i += 1
+                continue
+
+            if ch in ('}', ']'):
+                if stack:
+                    stack.pop()
+                expect_value = False
+                result.append(ch)
+                i += 1
+                continue
+
+            if ch == ':':
+                expect_value = True
+                result.append(ch)
+                i += 1
+                continue
+
+            if ch == ',':
+                if stack and stack[-1] == 'object':
+                    expect_value = False  # next token is a key
+                else:
+                    expect_value = True   # next token is a value (in array)
+                result.append(ch)
+                i += 1
+                continue
+
+            # Whitespace and other characters
+            result.append(ch)
+            i += 1
+
+        return ''.join(result)
+
+    # ── 清洗步骤 6：不完整 JSON 修复 ────────────────────────────────────────
 
     def _fix_incomplete_json(self, text):
         """

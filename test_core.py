@@ -249,8 +249,80 @@ class TestSingleQuotes(unittest.TestCase):
         self.assertEqual(self.p.parse(text), {"a": "no single quotes here"})
 
 
+class TestUnescapedQuotesInValues(unittest.TestCase):
+    """清洗步骤5：修复值字符串中未转义的引号。"""
+
+    def setUp(self):
+        self.p = LLMJsonParser()
+
+    def test_colon_pattern_in_value(self):
+        """值中包含 ":"（用户报告的原始 bug）。"""
+        text = '{"suggest": "软件管理":"应该写成xxx样子","rule":"软件管理不符合要求"}'
+        result = self.p.parse(text)
+        self.assertEqual(result["suggest"], '软件管理":"应该写成xxx样子')
+        self.assertEqual(result["rule"], "软件管理不符合要求")
+
+    def test_embedded_quotes_in_value(self):
+        """值中包含引号包裹的词语。"""
+        text = '{"msg": "say "hello" please", "ok": true}'
+        result = self.p.parse(text)
+        self.assertEqual(result["msg"], 'say "hello" please')
+        self.assertTrue(result["ok"])
+
+    def test_normal_json_unaffected(self):
+        """正常 JSON 不受影响。"""
+        text = '{"a": "hello", "b": 42, "c": true}'
+        result = self.p.parse(text)
+        self.assertEqual(result, {"a": "hello", "b": 42, "c": True})
+
+    def test_nested_objects_unaffected(self):
+        """嵌套对象不受影响。"""
+        text = '{"a": {"b": "value"}, "c": [1, 2]}'
+        result = self.p.parse(text)
+        self.assertEqual(result, {"a": {"b": "value"}, "c": [1, 2]})
+
+    def test_array_values_unaffected(self):
+        """数组值不受影响。"""
+        text = '["hello", "world", 42]'
+        result = self.p.parse(text)
+        self.assertEqual(result, ["hello", "world", 42])
+
+    def test_multiple_embedded_quotes_in_one_value(self):
+        """一个值中包含多个嵌入引号。"""
+        text = '{"msg": "he said "hi" and she said "bye"", "done": true}'
+        result = self.p.parse(text)
+        self.assertEqual(result["msg"], 'he said "hi" and she said "bye"')
+        self.assertTrue(result["done"])
+
+    def test_empty_string_values_preserved(self):
+        """空字符串值保持不变。"""
+        text = '{"a": "", "b": "text"}'
+        result = self.p.parse(text)
+        self.assertEqual(result, {"a": "", "b": "text"})
+
+    def test_already_escaped_quotes_not_double_escaped(self):
+        """已转义的引号不被重复转义。"""
+        text = '{"msg": "say \\"hello\\"", "ok": true}'
+        result = self.p.parse(text)
+        self.assertEqual(result["msg"], 'say "hello"')
+        self.assertTrue(result["ok"])
+
+    def test_embedded_quote_in_array_value(self):
+        """数组中的值字符串包含嵌入引号。"""
+        text = '["say "hello" please", "normal"]'
+        result = self.p.parse(text)
+        self.assertEqual(result[0], 'say "hello" please')
+        self.assertEqual(result[1], "normal")
+
+    def test_value_with_only_structural_after_close(self):
+        """值字符串关闭引号后紧跟 } 的正常情况。"""
+        text = '{"a": "value"}'
+        result = self.p.parse(text)
+        self.assertEqual(result, {"a": "value"})
+
+
 class TestIncompleteJson(unittest.TestCase):
-    """清洗步骤5：不完整 JSON 修复。"""
+    """清洗步骤6：不完整 JSON 修复。"""
 
     def setUp(self):
         self.p = LLMJsonParser()

@@ -404,6 +404,49 @@ You can use the token for subsequent requests."""
         self.assertAlmostEqual(result[0]["score"], 0.95)
 
 
+class TestUnescapedQuotesInLLMOutput(unittest.TestCase):
+    """LLM 输出中值字符串包含未转义引号的场景。"""
+
+    def setUp(self):
+        self.p = LLMJsonParser()
+
+    def test_chinese_llm_suggest_with_colon_quote_pattern(self):
+        """中文 LLM 返回含 ":" 模式的建议字段（用户报告的原始 bug）。"""
+        text = '{"suggest": "软件管理":"应该写成xxx样子","rule":"软件管理不符合要求"}'
+        result = self.p.parse(text)
+        self.assertEqual(result["suggest"], '软件管理":"应该写成xxx样子')
+        self.assertEqual(result["rule"], "软件管理不符合要求")
+
+    def test_llm_quoting_dialogue_in_value(self):
+        """LLM 在值中引用对话内容。"""
+        text = '{"analysis": "用户说 "我不同意" 然后离开了", "sentiment": "negative"}'
+        result = self.p.parse(text)
+        self.assertEqual(result["analysis"], '用户说 "我不同意" 然后离开了')
+        self.assertEqual(result["sentiment"], "negative")
+
+    def test_llm_code_snippet_in_value(self):
+        """LLM 在值中包含代码片段，含引号。"""
+        text = '{"fix": "将 "name" 改为 "username"", "file": "config.py"}'
+        result = self.p.parse(text)
+        self.assertEqual(result["fix"], '将 "name" 改为 "username"')
+        self.assertEqual(result["file"], "config.py")
+
+    def test_llm_multiple_fields_with_embedded_quotes(self):
+        """多个字段都有嵌入引号。"""
+        text = '{"error": "字段 "age" 不合法", "fix": "将 "age" 设为整数", "status": "failed"}'
+        result = self.p.parse(text)
+        self.assertEqual(result["error"], '字段 "age" 不合法')
+        self.assertEqual(result["fix"], '将 "age" 设为整数')
+        self.assertEqual(result["status"], "failed")
+
+    def test_llm_output_with_markdown_and_embedded_quotes(self):
+        """Markdown 代码块中的 JSON 也包含未转义引号。"""
+        text = '```json\n{"msg": "请使用 "utf-8" 编码", "ok": true}\n```'
+        result = self.p.parse(text)
+        self.assertEqual(result["msg"], '请使用 "utf-8" 编码')
+        self.assertTrue(result["ok"])
+
+
 class TestKnownLimitations(unittest.TestCase):
     """已知的局限性——这些用例预期会失败或行为不确定。"""
 
